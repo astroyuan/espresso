@@ -15,7 +15,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import espressomd
-from espressomd.interactions import HarmonicBond, Dihedral
 import numpy as np
 from scipy.spatial import ConvexHull
 import matplotlib.pyplot as plt
@@ -73,14 +72,103 @@ class Mesh:
             # load provided triangulation
             self.load_triangles(self.triangles_file)
 
-        # build additional info
+        # build edges
         self.build_edges()
+
+        # build dihedrals
         self.build_dihedrals()
 
-        for dihedral in self.dihedrals:
-            dihedral.get_dihedral_angle()
+        # type assignment
+        self.assign_vertices_type()
+        self.assign_edges_type()
+        self.assign_dihedrals_type()
+
+        # additional mesh properties
+        self.compute_mesh_properties()
 
         #self.plot_points()
+
+    def assign_vertices_type(self):
+        '''
+        assign A/B components
+        '''
+        cntA = 0
+        cntB = 0
+
+        for vertex in self.vertices:
+            if vertex.x > 0.0:
+                vertex.set_type(0)
+                cntA += 1
+            elif vertex.x < 0.0:
+                vertex.set_type(1)
+                cntB += 1
+            else:
+                # random for vertex in the middle
+                type_rnd = np.random.randint(2)
+                vertex.set_type(type_rnd)
+                if type_rnd == 0:
+                    cntA += 1
+                else:
+                    cntB += 1
+
+        print('A type vertices number: {}'.format(cntA))
+        print('B type vertices number: {}'.format(cntB))
+
+    def assign_edges_type(self):
+        '''
+        assign edge type according to its vertices
+        '''
+        cntAA = 0
+        cntBB = 0
+        cntAB = 0
+
+        for edge in self.edges:
+            v1 = edge.v1
+            v2 = edge.v2
+
+            v1_type = self.vertices[v1].type
+            v2_type = self.vertices[v2].type
+            if v1_type == v2_type:
+                edge.set_type(v1_type)
+                if v1_type == 0:
+                    cntAA += 1
+                else:
+                    cntBB += 1
+            else:
+                edge.set_type(2)
+                cntAB += 1
+
+        print('AA type edges number: {}'.format(cntAA))
+        print('BB type edges number: {}'.format(cntBB))
+        print('AB type edges number: {}'.format(cntAB))
+
+    def assign_dihedrals_type(self):
+        '''
+        assign dihedral type according to common edge vertices
+        '''
+        cntAA = 0
+        cntBB = 0
+        cntAB = 0
+
+        for dihedral in self.dihedrals:
+            v2 = dihedral.v2
+            v3 = dihedral.v3
+
+            v2_type = self.vertices[v2].type
+            v3_type = self.vertices[v3].type
+            if v2_type == v3_type:
+                dihedral.set_type(v2_type)
+                if v2_type == 0:
+                    cntAA += 1
+                else:
+                    cntBB += 1
+            else:
+                dihedral.set_type(2)
+                cntAB += 1
+
+        print('AA type dihedrals number: {}'.format(cntAA))
+        print('BB type dihedrals number: {}'.format(cntBB))
+        print('AB type dihedrals number: {}'.format(cntAB))
 
     def plot_points(self):
         fig = plt.figure()
@@ -378,9 +466,13 @@ class Vertex:
         self.z = z
         self.pos = np.array([x,y,z])
 
-        # neighbors info
-        self.edges_num = 0
-        self.neighbor_vertices = []
+        self.type = 0
+
+    def set_pos(self, r):
+        self.pos = r
+
+    def set_type(self, vtype):
+        self.type = vtype
 
 class Edge:
     '''
@@ -392,12 +484,17 @@ class Edge:
         self.v2 = v2
         self.vertices = frozenset([v1, v2])
 
+        self.type = 0
+
         self.r1 = None
         self.r2 = None
 
     def set_vertices_pos(self, r1, r2):
         self.r1 = r1
         self.r2 = r2
+
+    def set_type(self, etype):
+        self.type = etype
 
     def get_length(self):
         '''
@@ -416,6 +513,8 @@ class Face:
         self.v3 = v3
         self.vertices = frozenset([v1, v2, v3])
 
+        self.type = 0
+
         self.r1 = None
         self.r2 = None
         self.r3 = None
@@ -424,6 +523,9 @@ class Face:
         self.r1 = r1
         self.r2 = r2
         self.r3 = r3
+
+    def set_type(self, ftype):
+        self.type = ftype
 
 class Dihedral:
     '''
@@ -437,6 +539,8 @@ class Dihedral:
         self.v4 = v4
         self.vertices = frozenset([v1, v2, v3, v4])
 
+        self.type = 0
+
         self.r1 = None
         self.r2 = None
         self.r3 = None
@@ -447,6 +551,9 @@ class Dihedral:
         self.r2 = r2
         self.r3 = r3
         self.r4 = r4
+
+    def set_type(self, dtype):
+        self.type = dtype
 
     def get_dihedral_angle(self):
         '''
@@ -479,8 +586,8 @@ class ElasticObjectType:
     '''
     Define properties of an elastic object
     '''
-    def __init__(self, ks_A, ks_B, kb_A, kb_B, nodes_file, triangles_file,
-            rescale=(1.0, 1.0, 1.0)):
+    def __init__(self, nodes_file="", triangles_file="", rescale=(1.0, 1.0, 1.0), ks_A=0.0, ks_B=0.0, kb_A=0.0, kb_B=0.0 ):
+        # associated mesh data
         self.mesh = Mesh(nodes_file, triangles_file, rescale)
 
         # elastic parameters
@@ -497,11 +604,25 @@ class ElasticObjectType:
         self.global_area_conservation = []
         self.global_volume_conservation = []
 
+    def initialize(self):
+        '''
+        initialization
+        '''
+        # initialize mesh data
+        self.mesh.initialize()
+
+        # initialize interactions
+        self.define_bonded_interactions()
+
     def define_bonded_interactions(self):
         '''
         setup all bonded interactions
         '''
-        pass
+        # stretching
+        self.define_stretching_interactions()
+
+        # bending
+        self.define_bending_interactions()
 
     def define_stretching_interactions(self):
         '''
@@ -509,25 +630,29 @@ class ElasticObjectType:
         '''
         # stretching
         for edge in self.mesh.edges:
+            v1 = edge.v1
+            v2 = edge.v2
+
             if edge.type == 0:
                 # AA-bond
                 ks_AA = self.ks_A / 2.0
                 l0 = self.mesh.avg_edge_length
-                hb_AA = HarmonicBond(k=ks_AA, r_0=l0, r_cut=2*l0)
+                hb_AA = espressomd.interactions.HarmonicBond(k=ks_AA, r_0=l0, r_cut=2*l0)
                 self.stretching_interactions.append( (hb_AA, [v1,v2]) )
             elif edge.type == 1:
                 # BB-bond
                 ks_BB = self.ks_B / 2.0
                 l0 = self.mesh.avg_edge_length
-                hb_BB = HarmonicBond(k=ks_BB, r_0=l0, r_cut=2*l0)
+                hb_BB = espressomd.interactions.HarmonicBond(k=ks_BB, r_0=l0, r_cut=2*l0)
                 self.stretching_interactions.append( (hb_BB, [v1,v2]) )
             elif edge.type == 2:
                 # AB-bond
                 ks_AB = self.ks_A*self.ks_B / (self.ks_A + self.ks_B)
                 l0 = self.mesh.avg_edge_length
-                hb_AB = HarmonicBond(k=ks_AB, r_0=l0, r_cut=2*l0)
+                hb_AB = espressomd.interactions.HarmonicBond(k=ks_AB, r_0=l0, r_cut=2*l0)
                 self.stretching_interactions.append( (hb_AB, [v1,v2]) )
             else:
+                ipdb.set_trace()
                 raise Exception("Unrecognized edge type.")
 
     def define_bending_interactions(self):
@@ -536,36 +661,118 @@ class ElasticObjectType:
         '''
         # bending
         for dihedral in self.mesh.dihedrals:
+            v1 = dihedral.v1
+            v2 = dihedral.v2
+            v3 = dihedral.v3
+            v4 = dihedral.v4
+
             if dihedral.type == 0:
                 # AA-dihedral
                 kb_AA = self.kb_A
-                v1 = dihedral.v1
-                v2 = dihedral.v2
-                v3 = dihedral.v3
-                v4 = dihedral.v4
-
-                r1 = self.mesh.vertices[v1].pos
-                r2 = self.mesh.vertices[v2].pos
-                r3 = self.mesh.vertices[v3].pos
-                r4 = self.mesh.vertices[v4].pos
-
                 phi0 = np.pi
                 #phi0 = dihedral.get_dihedral_angle()
 
-                dihedral_AA = Dihedral(bend=kb_AA, mult=1, phase=phi0)
+                dihedral_AA = espressomd.interactions.Dihedral(bend=kb_AA, mult=1, phase=phi0)
                 self.bending_interactions.append( (dihedral_AA, [v1,v2,v3,v4]) )
+            elif dihedral.type == 1:
+                # BB-dihedral
+                kb_BB = self.kb_B
+                phi0 = np.pi
+                #phi0 = dihedral.get_dihedral_angle()
 
+                dihedral_BB = espressomd.interactions.Dihedral(bend=kb_BB, mult=1, phase=phi0)
+                self.bending_interactions.append( (dihedral_BB, [v1,v2,v3,v4]) )
+            elif dihedral.type == 2:
+                # AB-dihedral
+                kb_AB = (self.kb_A + self.kb_B) / 2.0
+                phi0 = np.pi
+                #phi0 = dihedral.get_dihedral_angle()
+
+                dihedral_AB = espressomd.interactions.Dihedral(bend=kb_AB, mult=1, phase=phi0)
+                self.bending_interactions.append( (dihedral_AB, [v1,v2,v3,v4]) )
+            else:
+                raise Exception("Unrecognized dihedral type.")
+
+    def define_local_area_conservation(self):
+        '''
+        define constrained forces which preserve the local area
+        '''
+        pass
+
+    def define_global_area_conservation(self):
+        '''
+        define constrained forces which preserve the total area
+        '''
+        pass
+
+    def define_global_volume_conservation(self):
+        '''
+        define constrained forces which preserve the total volume
+        '''
+        pass
 
 class ElasticObject:
     '''
     represent an elastic object
     '''
-    pass
+    def __init__(self, system=None, elastic_object_type=None, translate=(0.0, 0.0, 0.0), rotate=None):
+        # acctually create elastic object in espresso system
+        self.system = system
+        self.elastic_object_type = elastic_object_type
+        self.mesh = elastic_object_type.mesh
+
+    def create_particles(self):
+        '''
+        create espresso particles
+        '''
+        index_offset = self.system.part.highest_particle_id + 1
+        for vertex in self.mesh.vertices:
+            self.system.part.add(pos=vertex.pos, type=particle_type,
+                    mass=particle_mass, id=index_offset+vertex.index)
+
+    def create_bonded_interactions(self):
+        '''
+        create bonded interactions
+        '''
+        pass
+
+    def create_stretching_interactions(self):
+        '''
+        create stretching interactions
+        '''
+        for entry in self.elastic_object_type.stretching_interactions:
+            interaction = entry[0]
+            partners = entry[1]
+            assert len(partners) == 2
+
+            p0 = partners[0]
+            p1 = partners[1]
+
+            self.system.bonded_inter.add(interaction)
+            self.system.part[p0].add_bond(interaction, p1)
+
+    def create_bending_interactions(self):
+        '''
+        create bending interactions
+        '''
+        for entry in self.elastic_object_type.bending_interactions:
+            interaction = entry[0]
+            partners = entry[1]
+            assert len(partners) == 4
+
+            p0 = partners[0]
+            p1 = partners[1]
+            p2 = partners[2]
+            p3 = partners[3]
+
+            self.system.bonded_inter.add(interaction)
+            self.system.part[p1].add_bond(interaction, p0, p2, p3)
 
 if __name__ == "__main__":
     # test purpose
     nodes_file = '1082.6.6.nodes'
     triangles_file = '1082.6.6.triangles'
-    testMesh = Mesh(nodes_file, triangles_file)
-    testMesh.initialize()
+    test = ElasticObjectType(nodes_file, triangles_file, ks_A=1.0, ks_B=1.0,
+            kb_A=1.0, kb_B=1.0)
+    test.initialize()
     ipdb.set_trace()
