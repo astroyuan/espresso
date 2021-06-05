@@ -25,6 +25,8 @@ from .oif_classes import \
     OifCellType,\
     OifCell
 
+from .oif_classes_new import ElasticObjectType, ElasticObject
+
 from .oif_utils import \
     custom_str, \
     get_triangle_normal, \

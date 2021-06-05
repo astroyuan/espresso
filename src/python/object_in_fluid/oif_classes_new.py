@@ -61,7 +61,7 @@ class Mesh:
 
         # load input data
 
-        if nodes_file == "":
+        if self.nodes_file == "":
             raise Exception("Missing nodes file. Abort.")
         self.load_nodes(self.nodes_file)
 
@@ -588,6 +588,7 @@ class ElasticObjectType:
     '''
     def __init__(self, nodes_file="", triangles_file="", rescale=(1.0, 1.0, 1.0), ks_A=0.0, ks_B=0.0, kb_A=0.0, kb_B=0.0 ):
         # associated mesh data
+        print(nodes_file, triangles_file)
         self.mesh = Mesh(nodes_file, triangles_file, rescale)
 
         # elastic parameters
@@ -652,7 +653,6 @@ class ElasticObjectType:
                 hb_AB = espressomd.interactions.HarmonicBond(k=ks_AB, r_0=l0, r_cut=2*l0)
                 self.stretching_interactions.append( (hb_AB, [v1,v2]) )
             else:
-                ipdb.set_trace()
                 raise Exception("Unrecognized edge type.")
 
     def define_bending_interactions(self):
@@ -715,26 +715,45 @@ class ElasticObject:
     '''
     represent an elastic object
     '''
-    def __init__(self, system=None, elastic_object_type=None, translate=(0.0, 0.0, 0.0), rotate=None):
+    def __init__(self, system, elastic_object_type, object_id=0, particle_type_A=0, particle_type_B=1, translate=(0.0, 0.0, 0.0), rotate=(0.0, 0.0, 0.0)):
         # acctually create elastic object in espresso system
         self.system = system
         self.elastic_object_type = elastic_object_type
         self.mesh = elastic_object_type.mesh
+        self.object_id = object_id
+        self.particle_type_A = particle_type_A
+        self.particle_type_B = particle_type_B
+        self.index_offset = self.system.part.highest_particle_id + 1
+    
+    def initialize(self):
+        '''
+        initialization
+        '''
+        # create particles
+        self.create_particles()
+
+        # create bonded interactions
+        self.create_bonded_interactions()
 
     def create_particles(self):
         '''
         create espresso particles
         '''
-        index_offset = self.system.part.highest_particle_id + 1
         for vertex in self.mesh.vertices:
-            self.system.part.add(pos=vertex.pos, type=particle_type,
-                    mass=particle_mass, id=index_offset+vertex.index)
+            particle_pos = vertex.pos
+            particle_type = self.particle_type_A if vertex.type == 0 else self.particle_type_B
+            particle_id = self.index_offset + vertex.index
+            self.system.part.add(pos=particle_pos, type=particle_type, id=particle_id)
 
     def create_bonded_interactions(self):
         '''
         create bonded interactions
         '''
-        pass
+        # stretching
+        self.create_stretching_interactions()
+
+        # bending
+        self.create_bending_interactions()
 
     def create_stretching_interactions(self):
         '''
@@ -749,7 +768,7 @@ class ElasticObject:
             p1 = partners[1]
 
             self.system.bonded_inter.add(interaction)
-            self.system.part[p0].add_bond(interaction, p1)
+            self.system.part[p0].add_bond( (interaction, p1) )
 
     def create_bending_interactions(self):
         '''
@@ -766,7 +785,40 @@ class ElasticObject:
             p3 = partners[3]
 
             self.system.bonded_inter.add(interaction)
-            self.system.part[p1].add_bond(interaction, p0, p2, p3)
+            self.system.part[p1].add_bond( (interaction, p0, p2, p3) )
+
+    def output_vtk_pos(self, filename):
+        '''
+        write current configuration of elastic object
+        '''
+        n_points = self.mesh.vertices_num
+        n_triangles = self.mesh.faces_num
+
+        with open(filename, 'w') as vtkfile:
+            # Header
+            vtkfile.write("# vtk DataFile Version 3.0\n")
+            # Title
+            vtkfile.write("Elastic Object {:d} Data\n".format(self.object_id))
+            # Data type
+            vtkfile.write("ASCII\n")
+            # Geometry
+            vtkfile.write("DATASET POLYDATA\n")
+            # Points
+            vtkfile.write("POINTS {:d} float\n".format(self.mesh.vertices_num))
+            for vertex in self.mesh.vertices:
+                # retrive current vertex position from espresso
+                particle_id = vertex.index + self.index_offset
+                particle_pos = self.system.part[particle_id].pos
+                #particle_pos = self.system.part[particle_id].pos_folded
+                vtkfile.write("{:f} {:f} {:f}\n".format(particle_pos[0], particle_pos[1], particle_pos[2]))
+            # Triangles
+            vtkfile.write("TRIANGLE_STRIPS {:d} {:d}\n".format(self.mesh.faces_num, self.mesh.faces_num*4))
+            for face in self.mesh.faces:
+                # correspond to point ids, no offset needed
+                v1 = face.v1
+                v2 = face.v2
+                v3 = face.v3
+                vtkfile.write("3 {:d} {:d} {:d}\n".format(v1, v2, v3))
 
 if __name__ == "__main__":
     # test purpose
