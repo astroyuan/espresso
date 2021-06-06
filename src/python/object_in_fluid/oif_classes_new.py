@@ -20,6 +20,7 @@ from scipy.spatial import ConvexHull
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import ipdb
+from scipy.spatial.qhull import Voronoi
 
 class Mesh:
     '''
@@ -52,6 +53,7 @@ class Mesh:
         # mesh properties
         self.avg_edge_length = None
         self.total_area = None
+        self.total_area_voronoi = None
         self.total_volume = None
 
     def initialize(self):
@@ -78,6 +80,9 @@ class Mesh:
         # build dihedrals
         self.build_dihedrals()
 
+        # build vertices neighbor info
+        self.build_vertices_neighbor_info()
+
         # type assignment
         self.assign_vertices_type()
         self.assign_edges_type()
@@ -85,6 +90,9 @@ class Mesh:
 
         # additional mesh properties
         self.compute_mesh_properties()
+
+        # output mesh statistics
+        self.print_mesh_info()
 
         #self.plot_points()
 
@@ -203,7 +211,175 @@ class Mesh:
         plt.show()
 
     def compute_mesh_properties(self):
+        '''
+        compute additional properties based on underlying mesh data
+        '''
+        self.compute_face_properties()
+
+        self.compute_vertex_properties()
+
         self.compute_average_edge_length()
+
+        self.compute_total_area()
+
+        self.compute_total_volume()
+
+    def print_mesh_info(self):
+        '''
+        output a summary of mesh properties
+        '''
+        print("###########################")
+        print("#      Mesh Info          #")
+        print("###########################")
+
+        print("vertices number = {} edges number = {} faces number = {}".format(self.vertices_num, self.edges_num, self.faces_num))
+        print("total area = {} total volume = {}".format(self.total_area, self.total_volume))
+        print("total area (voronoi) = {}".format(self.total_area_voronoi))
+        print("average edge length = {}".format(self.avg_edge_length))
+        gb = 0.0
+        for vertex in self.vertices:
+            gb += vertex.area * vertex.gaussian_curvature
+        print("Gauss-Bonnet = {} deviation = {}".format(gb, np.abs(4*np.pi-gb)))
+    
+    def compute_vertex_properties(self):
+        '''
+        compute vertex properties
+        '''
+        # normals
+        self.compute_vertex_normals()
+        # curvatures
+        self.compute_vertex_curvatures()
+
+    def compute_vertex_normals(self):
+        '''
+        area-weighted normal vector
+        '''
+        for vertex in self.vertices:
+            vertex_normal = np.zeros(3)
+            normalization = 0.0
+            for neighbor_face_index in vertex.neighbor_faces:
+                face_area = self.faces[neighbor_face_index].area
+                face_normal = self.faces[neighbor_face_index].normal
+                vertex_normal += face_normal * face_area
+                normalization += face_area
+            vertex_normal /= normalization
+            vertex.normal = vertex_normal / np.linalg.norm(vertex_normal)
+
+    def compute_vertex_curvatures(self):
+        '''
+        compute vertex curvatures
+        ref: Gompper and Kroll 1996
+        ref: Discrete Differential Geometry Operators for Triangulated 2-Manifolds 2003
+        '''
+        # loop for all vertices
+        for vertex in self.vertices:
+            voronoi_area = 0.0
+            mean_curvature_vec = np.zeros(3)
+            internal_angles = 0.0
+            # loop for all neighbor vertices
+            for neighbor_vertex_index in vertex.neighbor_vertices:
+                neighbor_vertex = self.vertices[neighbor_vertex_index]
+                edge_vertices = frozenset([vertex.index, neighbor_vertex_index])
+                edge_index = self.edges_vertices2index[edge_vertices]
+                edge = self.edges[edge_index]
+
+                ri = vertex.r
+                rj = neighbor_vertex.r
+                rij = rj - ri
+                rij_norm = np.linalg.norm(rij)
+
+                opposite_vertices_index = [v for v in edge.opposite_vertices]
+                assert len(opposite_vertices_index) == 2
+                v1 = opposite_vertices_index[0]
+                v2 = opposite_vertices_index[1]
+                r1 = self.vertices[v1].r
+                r2 = self.vertices[v2].r
+
+                # mean-curvature
+                r1i = ri - r1
+                r1i_norm = np.linalg.norm(r1i)
+                r1j = rj - r1
+                r1j_norm = np.linalg.norm(r1j)
+                costheta1 = np.dot(r1i/r1i_norm, r1j/r1j_norm)
+                cottheta1 = costheta1 / np.sqrt(1-costheta1*costheta1)
+
+                r2i = ri - r2
+                r2i_norm = np.linalg.norm(r2i)
+                r2j = rj - r2
+                r2j_norm = np.linalg.norm(r2j)
+                costheta2 = np.dot(r2i/r2i_norm, r2j/r2j_norm)
+                cottheta2 = costheta2 / np.sqrt(1-costheta2*costheta2)
+
+                voronoi_area += (cottheta1 + cottheta2) * rij_norm**2 / 8.0
+                mean_curvature_vec += (cottheta1 + cottheta2) * rij / 2.0
+
+                # gaussian-curvature
+                ri1 = -r1i
+                ri1_norm = r1i_norm
+                ri2 = -r2i
+                ri2_norm = r2i_norm
+
+                theta1 = np.arccos( np.dot(rij/rij_norm, ri1/ri1_norm) )
+                if theta1 > np.pi / 2.0:
+                    raise Exception("Obtuse angle exists. Correction not implemented yet.")
+                internal_angles += theta1
+
+                theta2 = np.arccos( np.dot(rij/rij_norm, ri2/ri2_norm) )
+                if theta2 > np.pi / 2.0:
+                    raise Exception("Obtuse angle exists. Correction not implemented yet.")
+                internal_angles += theta2
+            
+            # voroni cell area
+            vertex.area = voronoi_area
+
+            # mean curvature
+            # sign convention:
+            # convex region > 0 concave region < 0
+            mean_curvature_vec /= voronoi_area
+            mean_curvature_norm = np.linalg.norm(mean_curvature_vec)
+            ort = np.sign( np.dot(mean_curvature_vec/mean_curvature_norm, vertex.normal) )
+            vertex.mean_curvature = -ort * mean_curvature_norm / 2.0
+
+            # gaussian curvature
+            internal_angles /= 2.0 # internal angles double counted
+            gaussian_curvature = (2.0 * np.pi - internal_angles) / voronoi_area
+            vertex.gaussian_curvature = gaussian_curvature
+
+            # principal curvatures
+            delta = 0.0
+            mean_curvature_sqr = vertex.mean_curvature**2
+            if mean_curvature_sqr > gaussian_curvature:
+                delta = mean_curvature_sqr - gaussian_curvature
+            else:
+                # unphysical case due to numerical errors
+                delta = 0.0
+                #print("WARNING: square of mean curvature is smaller than gaussian curvature.")
+            
+            vertex.curvature_1 = vertex.mean_curvature + np.sqrt(delta)
+            vertex.curvature_2 = vertex.mean_curvature - np.sqrt(delta)
+
+    def compute_face_properties(self):
+        '''
+        compute face properties
+        '''
+        for face in self.faces:
+            v1 = face.v1
+            v2 = face.v2
+            v3 = face.v3
+
+            r1 = self.vertices[v1].r
+            r2 = self.vertices[v2].r
+            r3 = self.vertices[v3].r
+
+            r12 = r2 - r1
+            r13 = r3 - r1
+
+            n = np.cross(r12, r13)
+            n_norm = np.linalg.norm(n)
+
+            face.area = n_norm / 2.0
+            face.volume = np.dot(r1, np.cross(r2, r3)) / 6.0
+            face.normal = n / n_norm
 
     def compute_average_edge_length(self):
         '''
@@ -213,6 +389,26 @@ class Mesh:
         for edge in self.edges:
             self.avg_edge_length += edge.get_length()
         self.avg_edge_length /= self.edges_num
+    
+    def compute_total_area(self):
+        '''
+        total area of mesh
+        '''
+        self.total_area = 0.0
+        for face in self.faces:
+            self.total_area += face.area
+
+        self.total_area_voronoi = 0.0
+        for vertex in self.vertices:
+            self.total_area_voronoi += vertex.area
+    
+    def compute_total_volume(self):
+        '''
+        total volume of mesh
+        '''
+        self.total_volume = 0.0
+        for face in self.faces:
+            self.total_volume += face.volume
 
     def load_nodes(self, filename):
         '''
@@ -250,9 +446,9 @@ class Mesh:
                 v2 = int(data[2])
                 v3 = int(data[3])
 
-                r1 = self.vertices[v1].pos
-                r2 = self.vertices[v2].pos
-                r3 = self.vertices[v3].pos
+                r1 = self.vertices[v1].r
+                r2 = self.vertices[v2].r
+                r3 = self.vertices[v3].r
 
                 # assume nodes are centered around origin
                 ort = int(np.sign( np.dot(r1, np.cross(r2, r3)) ))
@@ -271,6 +467,34 @@ class Mesh:
                 self.faces_num += 1
 
         print('{} faces loaded from triangles file: {}'.format(self.faces_num, filename))
+    
+    def build_vertices_neighbor_info(self):
+        '''
+        get neighbor vertices, edges and faces of each vertex
+        '''
+        for edge in self.edges:
+            index = edge.index
+            v1 = edge.v1
+            v2 = edge.v2
+
+            # vertex neighbor vertices info
+            self.vertices[v1].neighbor_vertices.add(v2)
+            self.vertices[v2].neighbor_vertices.add(v1)
+
+            # vertex neighbor edges info
+            self.vertices[v1].neighbor_edges.add(index)
+            self.vertices[v2].neighbor_edges.add(index)
+
+        for face in self.faces:
+            index = face.index
+            v1 = face.v1
+            v2 = face.v2
+            v3 = face.v3
+
+            # vertex neighbor faces info
+            self.vertices[v1].neighbor_faces.add(index)
+            self.vertices[v2].neighbor_faces.add(index)
+            self.vertices[v3].neighbor_faces.add(index)
 
     def build_edges(self):
         '''
@@ -295,8 +519,8 @@ class Mesh:
             v1 = vertex_pair[0]
             v2 = vertex_pair[1]
 
-            r1 = self.vertices[v1].pos
-            r2 = self.vertices[v2].pos
+            r1 = self.vertices[v1].r
+            r2 = self.vertices[v2].r
 
             newEdge = Edge(index, v1, v2)
             newEdge.set_vertices_pos(r1, r2)
@@ -374,15 +598,20 @@ class Mesh:
             if dihedral_index not in dihedrals_set:
                 index = self.dihedrals_num
 
-                r1 = self.vertices[v1].pos
-                r2 = self.vertices[v2].pos
-                r3 = self.vertices[v3].pos
-                r4 = self.vertices[v4].pos
+                r1 = self.vertices[v1].r
+                r2 = self.vertices[v2].r
+                r3 = self.vertices[v3].r
+                r4 = self.vertices[v4].r
 
                 newDihedral = Dihedral(index, v1, v2, v3, v4)
                 newDihedral.set_vertices_pos(r1, r2, r3, r4)
                 self.dihedrals.append(newDihedral)
                 self.dihedrals_vertices2index.update({newDihedral.vertices:index})
+
+                # edge opposite vertices info
+                edge_index = self.edges_vertices2index[frozenset([v2,v3])]
+                self.edges[edge_index].opposite_vertices.add(v1)
+                self.edges[edge_index].opposite_vertices.add(v4)
 
                 self.dihedrals_num += 1
                 dihedrals_set.add(dihedral_index)
@@ -407,15 +636,20 @@ class Mesh:
             if dihedral_index not in dihedrals_set:
                 index = self.dihedrals_num
 
-                r1 = self.vertices[v1].pos
-                r2 = self.vertices[v2].pos
-                r3 = self.vertices[v3].pos
-                r4 = self.vertices[v4].pos
+                r1 = self.vertices[v1].r
+                r2 = self.vertices[v2].r
+                r3 = self.vertices[v3].r
+                r4 = self.vertices[v4].r
 
                 newDihedral = Dihedral(index, v1, v2, v3, v4)
                 newDihedral.set_vertices_pos(r1, r2, r3, r4)
                 self.dihedrals.append(newDihedral)
                 self.dihedrals_vertices2index.update({newDihedral.vertices:index})
+
+                # edge opposite vertices info
+                edge_index = self.edges_vertices2index[frozenset([v2,v3])]
+                self.edges[edge_index].opposite_vertices.add(v1)
+                self.edges[edge_index].opposite_vertices.add(v4)
 
                 self.dihedrals_num += 1
                 dihedrals_set.add(dihedral_index)
@@ -440,15 +674,20 @@ class Mesh:
             if dihedral_index not in dihedrals_set:
                 index = self.dihedrals_num
 
-                r1 = self.vertices[v1].pos
-                r2 = self.vertices[v2].pos
-                r3 = self.vertices[v3].pos
-                r4 = self.vertices[v4].pos
+                r1 = self.vertices[v1].r
+                r2 = self.vertices[v2].r
+                r3 = self.vertices[v3].r
+                r4 = self.vertices[v4].r
 
                 newDihedral = Dihedral(index, v1, v2, v3, v4)
                 newDihedral.set_vertices_pos(r1, r2, r3, r4)
                 self.dihedrals.append(newDihedral)
                 self.dihedrals_vertices2index.update({newDihedral.vertices:index})
+
+                # edge opposite vertices info
+                edge_index = self.edges_vertices2index[frozenset([v2,v3])]
+                self.edges[edge_index].opposite_vertices.add(v1)
+                self.edges[edge_index].opposite_vertices.add(v4)
 
                 self.dihedrals_num += 1
                 dihedrals_set.add(dihedral_index)
@@ -464,12 +703,24 @@ class Vertex:
         self.x = x
         self.y = y
         self.z = z
-        self.pos = np.array([x,y,z])
+        self.r = np.array([x,y,z])
 
+        # neighbors info
+        self.neighbor_vertices = set()
+        self.neighbor_edges = set()
+        self.neighbor_faces = set()
+
+        # properties
         self.type = 0
+        self.normal = None
+        self.mean_curvature = None
+        self.gaussian_curvature = None
+        self.curvature_1 = None
+        self.curvature_2 = None
+        self.area = None
 
     def set_pos(self, r):
-        self.pos = r
+        self.r = r
 
     def set_type(self, vtype):
         self.type = vtype
@@ -484,6 +735,10 @@ class Edge:
         self.v2 = v2
         self.vertices = frozenset([v1, v2])
 
+        # neighbors info
+        self.opposite_vertices = set()
+
+        # properties
         self.type = 0
 
         self.r1 = None
@@ -513,11 +768,15 @@ class Face:
         self.v3 = v3
         self.vertices = frozenset([v1, v2, v3])
 
-        self.type = 0
-
         self.r1 = None
         self.r2 = None
         self.r3 = None
+
+        # properties
+        self.type = 0
+        self.area = None
+        self.volume = None
+        self.normal = None
 
     def set_vertices_pos(self, r1, r2, r3):
         self.r1 = r1
@@ -588,7 +847,6 @@ class ElasticObjectType:
     '''
     def __init__(self, nodes_file="", triangles_file="", rescale=(1.0, 1.0, 1.0), ks_A=0.0, ks_B=0.0, kb_A=0.0, kb_B=0.0 ):
         # associated mesh data
-        print(nodes_file, triangles_file)
         self.mesh = Mesh(nodes_file, triangles_file, rescale)
 
         # elastic parameters
@@ -733,14 +991,14 @@ class ElasticObject:
         self.create_particles()
 
         # create bonded interactions
-        self.create_bonded_interactions()
+        #self.create_bonded_interactions()
 
     def create_particles(self):
         '''
         create espresso particles
         '''
         for vertex in self.mesh.vertices:
-            particle_pos = vertex.pos
+            particle_pos = vertex.r
             particle_type = self.particle_type_A if vertex.type == 0 else self.particle_type_B
             particle_id = self.index_offset + vertex.index
             self.system.part.add(pos=particle_pos, type=particle_type, id=particle_id)
@@ -769,6 +1027,8 @@ class ElasticObject:
 
             self.system.bonded_inter.add(interaction)
             self.system.part[p0].add_bond( (interaction, p1) )
+        
+        print("stretching: {} bond interactions added.".format(len(self.elastic_object_type.stretching_interactions)))
 
     def create_bending_interactions(self):
         '''
@@ -786,13 +1046,43 @@ class ElasticObject:
 
             self.system.bonded_inter.add(interaction)
             self.system.part[p1].add_bond( (interaction, p0, p2, p3) )
+        
+        print("bending: {} dihedral interactions added.".format(len(self.elastic_object_type.bending_interactions)))
 
-    def output_vtk_pos(self, filename):
+    def output_vtk_point_data_scalar(self, filename, dataname, datatype):
+        '''
+        write per-point scalar data
+        '''
+        with open(filename, 'a') as vtkfile:
+            vtkfile.write("SCALARS {} {} 1\n".format(dataname, datatype))
+            vtkfile.write("LOOKUP_TABLE default\n")
+            for vertex in self.mesh.vertices:
+                vtkfile.write('{}\n'.format(getattr(vertex, dataname)))
+
+    def output_vtk_point_data_vector(self, filename, dataname, datatype):
+        '''
+        write per-point vector data
+        '''
+        with open(filename, 'a') as vtkfile:
+            vtkfile.write("VECTORS {} {}\n".format(dataname, datatype))
+            for vertex in self.mesh.vertices:
+                vector = getattr(vertex, dataname)
+                vtkfile.write('{} {} {}\n'.format(vector[0], vector[1], vector[2]))
+
+    def output_vtk_cell_data_scalar(self, filename, dataname, datatype):
+        '''
+        write per-cell scalar data
+        '''
+        with open(filename, 'a') as vtkfile:
+            vtkfile.write("SCALARS {} {} 1\n".format(dataname, datatype))
+            vtkfile.write("LOOKUP_TABLE default\n")
+            for face in self.mesh.faces:
+                vtkfile.write('{}\n'.format(getattr(face, dataname)))
+
+    def output_vtk_data(self, filename, output_attributes):
         '''
         write current configuration of elastic object
         '''
-        n_points = self.mesh.vertices_num
-        n_triangles = self.mesh.faces_num
 
         with open(filename, 'w') as vtkfile:
             # Header
@@ -811,20 +1101,58 @@ class ElasticObject:
                 particle_pos = self.system.part[particle_id].pos
                 #particle_pos = self.system.part[particle_id].pos_folded
                 vtkfile.write("{:f} {:f} {:f}\n".format(particle_pos[0], particle_pos[1], particle_pos[2]))
+            # Vertices
+            #vtkfile.write("VERTICES {:d} {:d}\n".format(self.mesh.vertices_num, self.mesh.vertices_num*2))
+            #for vertex in self.mesh.vertices:
+            #    # corresponding to point ids, no offset needed
+            #    vtkfile.write("1 {:d}\n".format(vertex.index))
+            # Lines
+            #vtkfile.write("LINES {:d} {:d}\n".format(self.mesh.edges_num, self.mesh.edges_num*3))
+            #for edge in self.mesh.edges:
+            #    # corresponding to point ids, no offset needed
+            #    v1 = edge.v1
+            #    v2 = edge.v2
+            #    vtkfile.write("2 {:d} {:d}\n".format(v1, v2))
             # Triangles
-            vtkfile.write("TRIANGLE_STRIPS {:d} {:d}\n".format(self.mesh.faces_num, self.mesh.faces_num*4))
+            vtkfile.write("POLYGONS {:d} {:d}\n".format(self.mesh.faces_num, self.mesh.faces_num*4))
             for face in self.mesh.faces:
                 # correspond to point ids, no offset needed
                 v1 = face.v1
                 v2 = face.v2
                 v3 = face.v3
                 vtkfile.write("3 {:d} {:d} {:d}\n".format(v1, v2, v3))
+            
+        # additional attributes
 
-if __name__ == "__main__":
-    # test purpose
-    nodes_file = '1082.6.6.nodes'
-    triangles_file = '1082.6.6.triangles'
-    test = ElasticObjectType(nodes_file, triangles_file, ks_A=1.0, ks_B=1.0,
-            kb_A=1.0, kb_B=1.0)
-    test.initialize()
-    ipdb.set_trace()
+        # point data - scalar (default)
+        with open(filename, 'a') as vtkfile:
+            vtkfile.write("POINT_DATA {}\n".format(self.mesh.vertices_num))
+            vtkfile.write("SCALARS {} {} 1\n".format("index", "int"))
+            vtkfile.write("LOOKUP_TABLE default\n")
+            for vertex in self.mesh.vertices:
+                vtkfile.write("{:d}\n".format(vertex.index))
+
+        # vertex type
+        if 'type' in output_attributes:
+            self.output_vtk_point_data_scalar(filename, 'type', 'int')
+        
+        # vertex mean curvature
+        if 'mean_curvature' in output_attributes:
+            self.output_vtk_point_data_scalar(filename, 'mean_curvature', 'float')
+
+        # vertex gaussian curvature
+        if 'gaussian_curvature' in output_attributes:
+            self.output_vtk_point_data_scalar(filename, 'gaussian_curvature', 'float')
+        
+        # vertex principal curvatures
+        if 'principal_curvatures' in output_attributes:
+            self.output_vtk_point_data_scalar(filename, 'curvature_1', 'float')
+            self.output_vtk_point_data_scalar(filename, 'curvature_2', 'float')
+        
+        # vertex area
+        if 'area' in output_attributes:
+            self.output_vtk_point_data_scalar(filename, 'area', 'float')
+
+        # vertex normal
+        if 'normal' in output_attributes:
+            self.output_vtk_point_data_vector(filename, 'normal', 'float')

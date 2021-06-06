@@ -24,6 +24,7 @@ required_features = ["EXTERNAL_FORCES"]
 espressomd.assert_features(required_features)
 
 import numpy as np
+import os
 import object_in_fluid as oif
 
 import ipdb
@@ -37,7 +38,7 @@ periodicX = True
 periodicY = True
 periodicZ = True
 
-time_step = 0.1
+time_step = 0.01
 
 system = espressomd.System(box_l=(boxX, boxY, boxZ))
 system.periodicity = (periodicX, periodicY, periodicZ)
@@ -48,8 +49,16 @@ system.cell_system.skin = 0.2
 #print(system.cuda_init_handle.list_devices())
 
 # input files
-nodes_file = "./input/1082.6.6.nodes"
-triangles_file = "./input/1082.6.6.triangles"
+input_folder = "./input/"
+nodes_file = input_folder + "1082.6.6.nodes"
+triangles_file = input_folder + "1082.6.6.triangles"
+
+# output files
+output_folder = "./output/"
+if not os.path.isdir(output_folder):
+    os.makedirs(output_folder)
+else:
+    print("output files already existed and will be overwritten.")
 
 # stretching constants
 ks_A = 1.0
@@ -60,8 +69,9 @@ kb_A = 1.0
 kb_B = 1.0
 
 # define the elastic object
+rescale=(1.0, 1.0, 1.0)
 elastic_object_type = oif.ElasticObjectType(nodes_file=nodes_file,
-        triangles_file=triangles_file, ks_A=ks_A, ks_B=ks_B, kb_A=kb_A, kb_B=kb_B)
+        triangles_file=triangles_file, rescale=rescale, ks_A=ks_A, ks_B=ks_B, kb_A=kb_A, kb_B=kb_B)
 elastic_object_type.initialize()
 
 # create the elastic object
@@ -69,6 +79,8 @@ translate = (0.0, 0.0, 0.0)
 rotate = (0.0, 0.0, 0.0)
 membrane = oif.ElasticObject(system, elastic_object_type, object_id=0, particle_type_A=0, particle_type_B=1, translate=translate, rotate=rotate)
 membrane.initialize()
+output_attributes = ['type', 'mean_curvature', 'gaussian_curvature', 'principal_curvatures', 'normal', 'area']
+membrane.output_vtk_data(output_folder+"swimmer.vtk", output_attributes)
 ipdb.set_trace()
 
 
