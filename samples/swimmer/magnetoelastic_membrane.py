@@ -19,8 +19,9 @@ Simulation of magnetoelastic membranes
 """
 
 import espressomd
+import espressomd.magnetostatics
 
-required_features = ["EXTERNAL_FORCES"]
+required_features = ["EXTERNAL_FORCES", "DIPOLES", "WCA"]
 espressomd.assert_features(required_features)
 
 import numpy as np
@@ -38,7 +39,7 @@ periodicX = True
 periodicY = True
 periodicZ = True
 
-time_step = 0.01
+time_step = 0.001
 
 system = espressomd.System(box_l=(boxX, boxY, boxZ))
 system.periodicity = (periodicX, periodicY, periodicZ)
@@ -60,16 +61,20 @@ if not os.path.isdir(output_folder):
 else:
     print("output files already existed and will be overwritten.")
 
+# particle types
+type_A = 0
+type_B = 1
+
 # stretching constants
-ks_A = 1.0
-ks_B = 1.0
+ks_A = 100.0
+ks_B = 100.0
 
 # bending constants
-kb_A = 1.0
-kb_B = 1.0
+kb_A = 10.0
+kb_B = 10.0
 
 # define the elastic object
-rescale=(1.0, 1.0, 1.0)
+rescale=(5.0, 5.0, 5.0)
 elastic_object_type = oif.ElasticObjectType(nodes_file=nodes_file,
         triangles_file=triangles_file, rescale=rescale, ks_A=ks_A, ks_B=ks_B, kb_A=kb_A, kb_B=kb_B)
 elastic_object_type.initialize()
@@ -77,11 +82,48 @@ elastic_object_type.initialize()
 # create the elastic object
 translate = (0.0, 0.0, 0.0)
 rotate = (0.0, 0.0, 0.0)
-membrane = oif.ElasticObject(system, elastic_object_type, object_id=0, particle_type_A=0, particle_type_B=1, translate=translate, rotate=rotate)
+membrane = oif.ElasticObject(system, elastic_object_type, object_id=0, particle_type_A=type_A, particle_type_B=type_B, translate=translate, rotate=rotate)
 membrane.initialize()
+
+# define magnetic interactions
+mu_A = 0.0
+mu_B = 0.01
+for p in system.part.select(type=type_B):
+    p.dip = (0.0, 0.0, mu_B)
+    p.dipm = np.linalg.norm(p.dip)
+
+# magnetic dipole-dipole interactions
+dipolar_direct_sum = espressomd.magnetostatics.DipolarDirectSumCpu(prefactor=1)
+
+system.actors.add(dipolar_direct_sum)
+
+# define lj interactions
+wca_epsilon = 1.0
+wca_sigma = 0.25
+
+system.non_bonded_inter[0, 0].wca.set_params(epsilon=wca_epsilon, sigma=wca_sigma)
+system.non_bonded_inter[1, 1].wca.set_params(epsilon=wca_epsilon, sigma=wca_sigma)
+system.non_bonded_inter[0, 1].wca.set_params(epsilon=wca_epsilon, sigma=wca_sigma)
+
+# thermostat
+system.thermostat.set_langevin(kT=0.0, gamma=1.0, seed=42)
+
+# intergrator
+system.integrator.set_vv()
+
 output_attributes = ['type', 'mean_curvature', 'gaussian_curvature', 'principal_curvatures', 'normal', 'area']
-membrane.output_vtk_data(output_folder+"swimmer.vtk", output_attributes)
-ipdb.set_trace()
+membrane.output_vtk_data(output_folder+"swimmer_0.vtk", output_attributes)
+
+steps = 100
+cycles = 10
+
+i=0
+#system.force_cap = 1
+while i < cycles:
+    system.integrator.run(steps)
+    i += 1
+    membrane.output_vtk_data(output_folder+"swimmer_{}.vtk".format(i), output_attributes)
+    print('current steps = {}'.format(i*steps))
 
 
 

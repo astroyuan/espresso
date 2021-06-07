@@ -20,7 +20,6 @@ from scipy.spatial import ConvexHull
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import ipdb
-from scipy.spatial.qhull import Voronoi
 
 class Mesh:
     '''
@@ -991,6 +990,7 @@ class ElasticObject:
         self.create_particles()
 
         # create bonded interactions
+        
         #self.create_bonded_interactions()
 
     def create_particles(self):
@@ -1001,7 +1001,7 @@ class ElasticObject:
             particle_pos = vertex.r
             particle_type = self.particle_type_A if vertex.type == 0 else self.particle_type_B
             particle_id = self.index_offset + vertex.index
-            self.system.part.add(pos=particle_pos, type=particle_type, id=particle_id)
+            self.system.part.add(pos=particle_pos, type=particle_type, id=particle_id, mol_id=self.object_id)
 
     def create_bonded_interactions(self):
         '''
