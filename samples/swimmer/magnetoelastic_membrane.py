@@ -21,6 +21,7 @@ Simulation of magnetoelastic membranes
 import espressomd
 import espressomd.magnetostatics
 
+print(espressomd.features())
 required_features = ["EXTERNAL_FORCES", "DIPOLES", "WCA"]
 espressomd.assert_features(required_features)
 
@@ -66,12 +67,12 @@ type_A = 0
 type_B = 1
 
 # stretching constants
-ks_A = 100.0
-ks_B = 100.0
+ks_A = 4000.0
+ks_B = 4000.0
 
 # bending constants
-kb_A = 10.0
-kb_B = 10.0
+kb_A = 50.0
+kb_B = 50.0
 
 # define the elastic object
 rescale=(5.0, 5.0, 5.0)
@@ -86,11 +87,15 @@ membrane = oif.ElasticObject(system, elastic_object_type, object_id=0, particle_
 membrane.initialize()
 
 # define magnetic interactions
-mu_A = 0.0
-mu_B = 0.01
-for p in system.part.select(type=type_B):
-    p.dip = (0.0, 0.0, mu_B)
-    p.dipm = np.linalg.norm(p.dip)
+mu_A = 1.0
+mu_B = 1.0
+for p in system.part:
+    if p.type == type_A:
+        p.dip = (0.0, 0.0, mu_A)
+        p.dipm = np.linalg.norm(p.dip)
+    if p.type == type_B:
+        p.dip = (0.0, 0.0, mu_B)
+        p.dipm = np.linalg.norm(p.dip)
 
 # magnetic dipole-dipole interactions
 dipolar_direct_sum = espressomd.magnetostatics.DipolarDirectSumCpu(prefactor=1)
@@ -106,20 +111,28 @@ system.non_bonded_inter[1, 1].wca.set_params(epsilon=wca_epsilon, sigma=wca_sigm
 system.non_bonded_inter[0, 1].wca.set_params(epsilon=wca_epsilon, sigma=wca_sigma)
 
 # thermostat
-system.thermostat.set_langevin(kT=0.0, gamma=1.0, seed=42)
+#system.thermostat.turn_off()
+system.thermostat.set_langevin(kT=0.1, gamma=1.0, seed=42)
 
 # intergrator
+#system.integrator.set_steepest_descent(f_max=0, gamma=0.1, max_displacement=0.01)
 system.integrator.set_vv()
 
 output_attributes = ['type', 'mean_curvature', 'gaussian_curvature', 'principal_curvatures', 'normal', 'area']
 membrane.output_vtk_data(output_folder+"swimmer_0.vtk", output_attributes)
 
-steps = 100
-cycles = 10
+#ipdb.set_trace()
+
+steps = 2000
+cycles = 2
 
 i=0
 #system.force_cap = 1
 while i < cycles:
+    print(system.analysis.min_dist())
+    energy = system.analysis.energy()
+    #ipdb.set_trace()
+    print('kinetic = {} bonded = {} non_bonded = {} dipolar = {}'.format(energy['kinetic'], energy['bonded'], energy['non_bonded'], energy['dipolar']))
     system.integrator.run(steps)
     i += 1
     membrane.output_vtk_data(output_folder+"swimmer_{}.vtk".format(i), output_attributes)

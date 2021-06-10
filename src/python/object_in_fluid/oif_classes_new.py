@@ -990,8 +990,7 @@ class ElasticObject:
         self.create_particles()
 
         # create bonded interactions
-        
-        #self.create_bonded_interactions()
+        self.create_bonded_interactions()
 
     def create_particles(self):
         '''
