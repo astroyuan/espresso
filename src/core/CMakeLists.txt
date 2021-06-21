@@ -7,6 +7,7 @@ set(EspressoCore_SRC
   constraints.cpp
   debug.cpp
   diamond.cpp
+  dipoleseter_global.cpp
   domain_decomposition.cpp
   dpd.cpp
   energy.cpp

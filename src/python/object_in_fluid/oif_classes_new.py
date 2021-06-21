@@ -19,6 +19,7 @@ import numpy as np
 from scipy.spatial import ConvexHull
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+import copy
 import ipdb
 
 class Mesh:
@@ -49,7 +50,7 @@ class Mesh:
         self.faces_vertices2index = {}
         self.dihedrals_vertices2index = {}
 
-        # mesh properties
+        # additional properties
         self.avg_edge_length = None
         self.total_area = None
         self.total_area_voronoi = None
@@ -59,9 +60,7 @@ class Mesh:
         '''
         initialize mesh data
         '''
-
         # load input data
-
         if self.nodes_file == "":
             raise Exception("Missing nodes file. Abort.")
         self.load_nodes(self.nodes_file)
@@ -87,10 +86,8 @@ class Mesh:
         self.assign_edges_type()
         self.assign_dihedrals_type()
 
-        # additional mesh properties
         self.compute_mesh_properties()
 
-        # output mesh statistics
         self.print_mesh_info()
 
         #self.plot_points()
@@ -719,6 +716,9 @@ class Vertex:
         self.area = None
 
     def set_pos(self, r):
+        self.x = r[0]
+        self.y = r[1]
+        self.z = r[2]
         self.r = r
 
     def set_type(self, vtype):
@@ -968,6 +968,41 @@ class ElasticObjectType:
         '''
         pass
 
+class Particle:
+    '''
+    represent an physical particle in the ESPResSo system associated with each vertex point
+    '''
+    def __init__(self, part, mesh_id):
+        self.part = part
+        self.mesh_id = mesh_id
+
+    def get_id(self):
+        return self.part.id
+
+    def get_mol_id(self):
+        return self.part.mol_id
+
+    def get_pos(self):
+        return self.part.pos
+    
+    def get_pos_folded(self):
+        return self.part.pos_folded
+    
+    def get_vel(self):
+        return self.part.vel
+    
+    def get_mass(self):
+        return self.part.mass
+    
+    def get_type(self):
+        return self.part.type
+    
+    def get_force(self):
+        return self.part.f
+    
+    def get_dipole(self):
+        return self.part.dip * self.part.dipm
+
 class ElasticObject:
     '''
     represent an elastic object
@@ -976,11 +1011,20 @@ class ElasticObject:
         # acctually create elastic object in espresso system
         self.system = system
         self.elastic_object_type = elastic_object_type
-        self.mesh = elastic_object_type.mesh
+
+        self.particles = []
+        self.mesh = copy.deepcopy(elastic_object_type.mesh)
+
         self.object_id = object_id
         self.particle_type_A = particle_type_A
         self.particle_type_B = particle_type_B
         self.index_offset = self.system.part.highest_particle_id + 1
+
+        # additional properties
+        self.avg_edge_length = None
+        self.total_area = None
+        self.total_area_voronoi = None
+        self.total_volume = None
     
     def initialize(self):
         '''
@@ -1000,7 +1044,8 @@ class ElasticObject:
             particle_pos = vertex.r
             particle_type = self.particle_type_A if vertex.type == 0 else self.particle_type_B
             particle_id = self.index_offset + vertex.index
-            self.system.part.add(pos=particle_pos, type=particle_type, id=particle_id, mol_id=self.object_id)
+            new_particle = self.system.part.add(pos=particle_pos, type=particle_type, id=particle_id, mol_id=self.object_id)
+            self.particles.append(Particle(new_particle, vertex.index))
 
     def create_bonded_interactions(self):
         '''
@@ -1021,8 +1066,9 @@ class ElasticObject:
             partners = entry[1]
             assert len(partners) == 2
 
-            p0 = partners[0]
-            p1 = partners[1]
+            # particle id
+            p0 = partners[0] + self.index_offset
+            p1 = partners[1] + self.index_offset
 
             self.system.bonded_inter.add(interaction)
             self.system.part[p0].add_bond( (interaction, p1) )
@@ -1038,16 +1084,20 @@ class ElasticObject:
             partners = entry[1]
             assert len(partners) == 4
 
-            p0 = partners[0]
-            p1 = partners[1]
-            p2 = partners[2]
-            p3 = partners[3]
+            # particle id
+            p0 = partners[0] + self.index_offset
+            p1 = partners[1] + self.index_offset
+            p2 = partners[2] + self.index_offset
+            p3 = partners[3] + self.index_offset
 
             self.system.bonded_inter.add(interaction)
             self.system.part[p1].add_bond( (interaction, p0, p2, p3) )
         
         print("bending: {} dihedral interactions added.".format(len(self.elastic_object_type.bending_interactions)))
 
+    ####################################################################
+    # output functions
+    ####################################################################
     def output_vtk_point_data_scalar(self, filename, dataname, datatype):
         '''
         write per-point scalar data
@@ -1057,6 +1107,16 @@ class ElasticObject:
             vtkfile.write("LOOKUP_TABLE default\n")
             for vertex in self.mesh.vertices:
                 vtkfile.write('{}\n'.format(getattr(vertex, dataname)))
+    
+    def output_vtk_point_data_scalar_part(self, filename, dataname, datatype):
+        '''
+        write per-point vector data
+        '''
+        with open(filename, 'a') as vtkfile:
+            vtkfile.write("SCALARS {} {} 1\n".format(dataname, datatype))
+            vtkfile.write("LOOKUP_TABLE default\n")
+            for part in self.particles:
+                vtkfile.write('{}\n'.format(getattr(part, 'get_'+dataname)()))
 
     def output_vtk_point_data_vector(self, filename, dataname, datatype):
         '''
@@ -1066,6 +1126,16 @@ class ElasticObject:
             vtkfile.write("VECTORS {} {}\n".format(dataname, datatype))
             for vertex in self.mesh.vertices:
                 vector = getattr(vertex, dataname)
+                vtkfile.write('{} {} {}\n'.format(vector[0], vector[1], vector[2]))
+    
+    def output_vtk_point_data_vector_part(self, filename, dataname, datatype):
+        '''
+        write per-point vector data
+        '''
+        with open(filename, 'a') as vtkfile:
+            vtkfile.write("VECTORS {} {}\n".format(dataname, datatype))
+            for part in self.particles:
+                vector = getattr(part, 'get_'+dataname)()
                 vtkfile.write('{} {} {}\n'.format(vector[0], vector[1], vector[2]))
 
     def output_vtk_cell_data_scalar(self, filename, dataname, datatype):
@@ -1078,7 +1148,7 @@ class ElasticObject:
             for face in self.mesh.faces:
                 vtkfile.write('{}\n'.format(getattr(face, dataname)))
 
-    def output_vtk_data(self, filename, output_attributes):
+    def output_vtk_data(self, filename, output_attributes, wrapped_pos=False):
         '''
         write current configuration of elastic object
         '''
@@ -1096,9 +1166,14 @@ class ElasticObject:
             vtkfile.write("POINTS {:d} float\n".format(self.mesh.vertices_num))
             for vertex in self.mesh.vertices:
                 # retrive current vertex position from espresso
-                particle_id = vertex.index + self.index_offset
-                particle_pos = self.system.part[particle_id].pos
-                #particle_pos = self.system.part[particle_id].pos_folded
+                if wrapped_pos == False:
+                    particle_pos = self.particles[vertex.index].get_pos()
+                else:
+                    particle_pos = self.particles[vertex.index].get_pos_folded()
+                # update underlying mesh vertex position
+                vertex.set_pos(particle_pos)
+
+                # output vertex position
                 vtkfile.write("{:f} {:f} {:f}\n".format(particle_pos[0], particle_pos[1], particle_pos[2]))
             # Vertices
             #vtkfile.write("VERTICES {:d} {:d}\n".format(self.mesh.vertices_num, self.mesh.vertices_num*2))
@@ -1123,7 +1198,10 @@ class ElasticObject:
             
         # additional attributes
 
-        # point data - scalar (default)
+        # update mesh properties
+        self.mesh.compute_mesh_properties()
+
+        # particle index - default
         with open(filename, 'a') as vtkfile:
             vtkfile.write("POINT_DATA {}\n".format(self.mesh.vertices_num))
             vtkfile.write("SCALARS {} {} 1\n".format("index", "int"))
@@ -1155,3 +1233,7 @@ class ElasticObject:
         # vertex normal
         if 'normal' in output_attributes:
             self.output_vtk_point_data_vector(filename, 'normal', 'float')
+
+        # particle dipole moment
+        if 'dipole' in output_attributes:
+            self.output_vtk_point_data_vector_part(filename, 'dipole', 'float')

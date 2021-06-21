@@ -91,20 +91,27 @@ mu_A = 1.0
 mu_B = 1.0
 for p in system.part:
     if p.type == type_A:
-        p.dip = (0.0, 0.0, mu_A)
-        p.dipm = np.linalg.norm(p.dip)
+        p.dip = (0.0, 0.0, 1.0)
+        p.dipm = mu_A
     if p.type == type_B:
-        p.dip = (0.0, 0.0, mu_B)
-        p.dipm = np.linalg.norm(p.dip)
+        p.dip = (0.0, 0.0, 1.0)
+        p.dipm = mu_B
+
+H_field = [1,0,0]
+H_constraint = espressomd.constraints.HomogeneousMagneticField(H=H_field)
+system.constraints.add(H_constraint)
 
 # magnetic dipole-dipole interactions
 dipolar_direct_sum = espressomd.magnetostatics.DipolarDirectSumCpu(prefactor=1)
-
 system.actors.add(dipolar_direct_sum)
+
+# dipolar p3m
+#p3m = espressomd.magnetostatics.DipolarP3M(prefactor=1, accuracy=1e-3, r_cut=2.0)
+#system.actors.add(p3m)
 
 # define lj interactions
 wca_epsilon = 1.0
-wca_sigma = 0.25
+wca_sigma = 0.4
 
 system.non_bonded_inter[0, 0].wca.set_params(epsilon=wca_epsilon, sigma=wca_sigma)
 system.non_bonded_inter[1, 1].wca.set_params(epsilon=wca_epsilon, sigma=wca_sigma)
@@ -118,13 +125,11 @@ system.thermostat.set_langevin(kT=0.1, gamma=1.0, seed=42)
 #system.integrator.set_steepest_descent(f_max=0, gamma=0.1, max_displacement=0.01)
 system.integrator.set_vv()
 
-output_attributes = ['type', 'mean_curvature', 'gaussian_curvature', 'principal_curvatures', 'normal', 'area']
+output_attributes = ['type', 'mean_curvature', 'gaussian_curvature', 'normal', 'area', 'dipole']
 membrane.output_vtk_data(output_folder+"swimmer_0.vtk", output_attributes)
 
-#ipdb.set_trace()
-
-steps = 2000
-cycles = 2
+steps = 500
+cycles = 5
 
 i=0
 #system.force_cap = 1
@@ -134,6 +139,7 @@ while i < cycles:
     #ipdb.set_trace()
     print('kinetic = {} bonded = {} non_bonded = {} dipolar = {}'.format(energy['kinetic'], energy['bonded'], energy['non_bonded'], energy['dipolar']))
     system.integrator.run(steps)
+    ipdb.set_trace()
     i += 1
     membrane.output_vtk_data(output_folder+"swimmer_{}.vtk".format(i), output_attributes)
     print('current steps = {}'.format(i*steps))
