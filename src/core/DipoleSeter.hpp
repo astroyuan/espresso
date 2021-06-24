@@ -66,7 +66,7 @@ public:
 
   void set_field_direction(double t) {
     // current phase angle
-    m_phi = t * m_freq + m_phase0;
+    m_phi = t * m_freq * M_PI + m_phase0;
 
     switch (m_axis) {
         case 0:
@@ -94,17 +94,16 @@ public:
 
   void apply(ParticleRange &particles) {
       if (m_enabled == false) return;
-      //
 
-      // current fields
-      printf("current simulation time: %f\n", sim_time);
+      // setup fields
+      //printf("current simulation time: %f\n", sim_time);
       m_time = sim_time;
       set_field_strength(sim_time);
       set_field_direction(sim_time);
 
       // current fields
       m_H = m_Hdir * m_Hm;
-      printf("current fields: %f %f %f\n", m_H[0], m_H[1], m_H[2]);
+      //printf("current fields: %f %f %f\n", m_H[0], m_H[1], m_H[2]);
 
       // get dipole direction - align with external fields
       convert_director_to_quat(m_Hdir, m_quat);

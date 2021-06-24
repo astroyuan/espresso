@@ -316,13 +316,13 @@ class Mesh:
                 ri2_norm = r2i_norm
 
                 theta1 = np.arccos( np.dot(rij/rij_norm, ri1/ri1_norm) )
-                if theta1 > np.pi / 2.0:
-                    raise Exception("Obtuse angle exists. Correction not implemented yet.")
+                #if theta1 > np.pi / 2.0:
+                #    raise Warning("Obtuse angle exists. Correction not implemented yet.")
                 internal_angles += theta1
 
                 theta2 = np.arccos( np.dot(rij/rij_norm, ri2/ri2_norm) )
-                if theta2 > np.pi / 2.0:
-                    raise Exception("Obtuse angle exists. Correction not implemented yet.")
+                #if theta2 > np.pi / 2.0:
+                #    raise Warning("Obtuse angle exists. Correction not implemented yet.")
                 internal_angles += theta2
             
             # voroni cell area
@@ -1001,7 +1001,7 @@ class Particle:
         return self.part.f
     
     def get_dipole(self):
-        return self.part.dip * self.part.dipm
+        return self.part.dip
 
 class ElasticObject:
     '''
@@ -1019,7 +1019,7 @@ class ElasticObject:
         self.particle_type_A = particle_type_A
         self.particle_type_B = particle_type_B
         self.index_offset = self.system.part.highest_particle_id + 1
-    
+
     def initialize(self):
         '''
         initialization
