@@ -33,6 +33,7 @@
 #include "observables/initialize.hpp"
 
 #include "ComFixed.hpp"
+#include "DipoleSeter.hpp"
 
 #include "ParallelScriptInterface.hpp"
 
@@ -59,6 +60,7 @@ void initialize() {
   CollisionDetection::initialize();
 
   ScriptInterface::register_new<ComFixed>("ComFixed");
+  ScriptInterface::register_new<DipoleSeter>("DipoleSeter");
 }
 
 } /* namespace ScriptInterface */

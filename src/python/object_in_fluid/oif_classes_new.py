@@ -1019,12 +1019,6 @@ class ElasticObject:
         self.particle_type_A = particle_type_A
         self.particle_type_B = particle_type_B
         self.index_offset = self.system.part.highest_particle_id + 1
-
-        # additional properties
-        self.avg_edge_length = None
-        self.total_area = None
-        self.total_area_voronoi = None
-        self.total_volume = None
     
     def initialize(self):
         '''

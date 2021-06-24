@@ -29,6 +29,7 @@
 
 #include "collision.hpp"
 #include "comfixed_global.hpp"
+#include "dipoleseter_global.hpp"
 #include "communication.hpp"
 #include "constraints.hpp"
 #include "electrostatics_magnetostatics/dipole.hpp"
@@ -93,6 +94,10 @@ void force_calc(CellStructure &cell_structure) {
 #ifdef ELECTROSTATICS
   iccp3m_iteration(particles, cell_structure.ghost_cells().particles());
 #endif
+
+  // set dipole moments before force computation
+  dipoleseter.apply(particles);
+
   init_forces(particles);
 
   for (auto &forceActor : forceActors) {

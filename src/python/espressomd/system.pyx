@@ -48,6 +48,7 @@ if LB_BOUNDARIES or LB_BOUNDARIES_GPU:
     from .lbboundaries import LBBoundaries
     from .ekboundaries import EKBoundaries
 from .comfixed import ComFixed
+from .dipoleseter import DipoleSeter
 from .utils cimport handle_errors, check_type_or_throw_except
 from globals cimport max_seen_particle
 from .globals import Globals
@@ -119,6 +120,8 @@ cdef class System:
         """:class:`espressomd.cuda_init.CudaInitHandle`"""
         comfixed
         """:class:`espressomd.comfixed.ComFixed`"""
+        dipoleseter
+        """:class:`espressomd.dipoleseter.DipoleSeter`"""
         _active_virtual_sites_handle
 
     def __init__(self, **kwargs):
@@ -143,6 +146,7 @@ cdef class System:
             IF COLLISION_DETECTION == 1:
                 self.collision_detection = CollisionDetection()
             self.comfixed = ComFixed()
+            self.dipoleseter = DipoleSeter()
             self.constraints = Constraints()
             IF CUDA:
                 self.cuda_init_handle = cuda_init.CudaInitHandle()
@@ -180,6 +184,7 @@ cdef class System:
         odict['auto_update_accumulators'] = System.__getattribute__(
             self, "auto_update_accumulators")
         odict['comfixed'] = System.__getattribute__(self, "comfixed")
+        odict['dipoleseter'] = System.__getattribute__(self, "dipoleseter")
         odict['constraints'] = System.__getattribute__(self, "constraints")
         odict['galilei'] = System.__getattribute__(self, "galilei")
         odict['integrator'] = System.__getattribute__(self, "integrator")

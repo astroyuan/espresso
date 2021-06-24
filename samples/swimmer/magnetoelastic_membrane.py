@@ -50,6 +50,9 @@ system.cell_system.skin = 0.2
 # cuda devices
 #print(system.cuda_init_handle.list_devices())
 
+# MPI
+print("MPI configuration: " + str(system.cell_system.node_grid))
+
 # input files
 input_folder = "./input/"
 nodes_file = input_folder + "1082.6.6.nodes"
@@ -65,6 +68,10 @@ else:
 # particle types
 type_A = 0
 type_B = 1
+
+# particle dipole moments
+mu_A = 0.0
+mu_B = 1.0
 
 # stretching constants
 ks_A = 4000.0
@@ -86,20 +93,22 @@ rotate = (0.0, 0.0, 0.0)
 membrane = oif.ElasticObject(system, elastic_object_type, object_id=0, particle_type_A=type_A, particle_type_B=type_B, translate=translate, rotate=rotate)
 membrane.initialize()
 
-# define magnetic interactions
-mu_A = 1.0
-mu_B = 1.0
-for p in system.part:
-    if p.type == type_A:
-        p.dip = (0.0, 0.0, 1.0)
-        p.dipm = mu_A
-    if p.type == type_B:
-        p.dip = (0.0, 0.0, 1.0)
-        p.dipm = mu_B
-
-H_field = [1,0,0]
-H_constraint = espressomd.constraints.HomogeneousMagneticField(H=H_field)
-system.constraints.add(H_constraint)
+# define external fields
+system.dipoleseter.enabled = True
+# field strength
+system.dipoleseter.amp = 1.0
+# precession angle
+system.dipoleseter.angle = 30/180 * np.pi
+# precession frequency
+system.dipoleseter.freq = 2.0*np.pi / (100*time_step)
+# initial phase
+system.dipoleseter.phase0 = 0.0
+# precession axis
+system.dipoleseter.axis = 2
+# particle types
+system.dipoleseter.types = [type_A, type_B]
+# particle dipoles
+system.dipoleseter.mus = [mu_A, mu_B]
 
 # magnetic dipole-dipole interactions
 dipolar_direct_sum = espressomd.magnetostatics.DipolarDirectSumCpu(prefactor=1)
@@ -131,6 +140,8 @@ membrane.output_vtk_data(output_folder+"swimmer_0.vtk", output_attributes)
 steps = 500
 cycles = 5
 
+ipdb.set_trace()
+
 i=0
 #system.force_cap = 1
 while i < cycles:
@@ -139,11 +150,9 @@ while i < cycles:
     #ipdb.set_trace()
     print('kinetic = {} bonded = {} non_bonded = {} dipolar = {}'.format(energy['kinetic'], energy['bonded'], energy['non_bonded'], energy['dipolar']))
     system.integrator.run(steps)
-    ipdb.set_trace()
     i += 1
     membrane.output_vtk_data(output_folder+"swimmer_{}.vtk".format(i), output_attributes)
     print('current steps = {}'.format(i*steps))
-
 
 
 

@@ -32,7 +32,17 @@ namespace ScriptInterface {
 class DipoleSeter : public AutoParameters<DipoleSeter> {
 public:
   DipoleSeter() {
-    add_parameters({{"angle", 1}});
+    add_parameters({{"enabled", dipoleseter.enabled()},
+                    {"amp", dipoleseter.amp()},
+                    {"angle", dipoleseter.angle()},
+                    {"freq", dipoleseter.freq()},
+                    {"phase0", dipoleseter.phase0()},
+                    {"axis", dipoleseter.axis()},
+                    {"time", dipoleseter.time()},
+                    {"H", dipoleseter.H()},
+                    {"types", [](Variant const &v){ dipoleseter.set_types(get_value<std::vector<int>>(v));}, [](){ return dipoleseter.get_types(); }},
+                    {"mus", [](Variant const &v){ dipoleseter.set_mus(get_value<std::vector<double>>(v));}, [](){ return dipoleseter.get_mus(); }}
+                    });
   }
 };
 } // namespace ScriptInterface
