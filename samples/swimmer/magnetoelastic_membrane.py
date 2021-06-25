@@ -46,11 +46,11 @@ periodicX = True
 periodicY = True
 periodicZ = True
 
-nsteps = 1000
 ncycles = 50
+steps_per_cycle = 1000
 time_step = 0.001
 
-total_steps = nsteps*ncycles
+total_steps = ncycles*steps_per_cycle
 total_time = time_step*total_steps
 
 # input files
@@ -78,7 +78,7 @@ type_B = 1
 
 # stretching constants
 ks_A = 4000.0
-ks_B = 400.0
+ks_B = 4000.0
 ks_AA = ks_A / 2.0
 ks_BB = ks_B / 2.0
 ks_AB = ks_A*ks_B / (ks_A + ks_B)
@@ -92,7 +92,7 @@ kb_AB = (kb_A + kb_B) / 2.0
 
 # particle dipole moments
 mu_A = 0.0
-mu_B = 1.0
+mu_B = 0.0
 
 ####################
 # fluid properties #
@@ -135,7 +135,7 @@ print("MPI configuration: " + str(system.cell_system.node_grid))
 # define the elastic object
 rescale = np.ones(3) * membrane_radius
 elastic_object_type = oif.ElasticObjectType(nodes_file=nodes_file,
-        triangles_file=triangles_file, rescale=rescale, ks_A=ks_A, ks_B=ks_B, kb_A=kb_A, kb_B=kb_B)
+        triangles_file=triangles_file, rescale=rescale, ks_A=ks_A, ks_B=ks_B, kb_A=kb_A, kb_B=kb_B, refState='flat')
 elastic_object_type.initialize()
 
 # create the elastic object
@@ -166,7 +166,7 @@ system.actors.add(dipolar_direct_sum)
 # steric interactions #
 #######################
 # define lj interactions
-wca_epsilon = 1.0
+wca_epsilon = 0.0
 wca_sigma = diameter
 
 system.non_bonded_inter[0, 0].wca.set_params(epsilon=wca_epsilon, sigma=wca_sigma)
@@ -272,20 +272,26 @@ membrane.output_vtk_data(output_folder+"swimmer_0.vtk", output_attributes)
 ipdb.set_trace()
 
 i=0
+system.time = 0
 #system.force_cap = 1
 while i < ncycles:
     print(system.analysis.min_dist())
     energy = system.analysis.energy()
-    #ipdb.set_trace()
-    print('kinetic = {} bonded = {} non_bonded = {} dipolar = {}'.format(energy['kinetic'], energy['bonded'], energy['non_bonded'], energy['dipolar']))
-    system.integrator.run(nsteps)
-    i += 1
-    membrane.output_vtk_data(output_folder+"swimmer_{}.vtk".format(i), output_attributes)
-    print('current steps = {}'.format(i*nsteps))
+    print('time = {} kinetic = {} bonded = {} non_bonded = {} dipolar = {}'.format(system.time, energy['kinetic'], energy['bonded'], energy['non_bonded'], energy['dipolar']))
+
+    # control external fields
     if i % 20 < 10:
         system.dipoleseter.angle = 90/180 * np.pi
     else:
         system.dipoleseter.angle = 0.0
+
+    # execute the simulation
+    system.integrator.run(steps_per_cycle)
+
+    # output
+    membrane.output_vtk_data(output_folder+"swimmer_{}.vtk".format(i), output_attributes)
+
+    i += 1
 
 
 

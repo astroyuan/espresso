@@ -837,6 +837,8 @@ class Dihedral:
         cosphi = np.dot(n1_hat, n2_hat)
 
         phi = np.arccos(cosphi)
+        if (np.dot(n1_hat, r34) < 0.0):
+            phi = 2.0 * np.pi - phi
 
         return phi
 
@@ -844,7 +846,7 @@ class ElasticObjectType:
     '''
     Define properties of an elastic object
     '''
-    def __init__(self, nodes_file="", triangles_file="", rescale=(1.0, 1.0, 1.0), ks_A=0.0, ks_B=0.0, kb_A=0.0, kb_B=0.0 ):
+    def __init__(self, nodes_file="", triangles_file="", rescale=(1.0, 1.0, 1.0), ks_A=0.0, ks_B=0.0, kb_A=0.0, kb_B=0.0, refState="flat"):
         # associated mesh data
         self.mesh = Mesh(nodes_file, triangles_file, rescale)
 
@@ -854,6 +856,9 @@ class ElasticObjectType:
 
         self.kb_A = kb_A
         self.kb_B = kb_B
+
+        # reference state: flat or initial
+        self.refState = refState
 
         # bonded interactions
         self.stretching_interactions = []
@@ -890,23 +895,27 @@ class ElasticObjectType:
         for edge in self.mesh.edges:
             v1 = edge.v1
             v2 = edge.v2
+            # equilibrium length
+            if self.refState == 'flat':
+                l0 = self.mesh.avg_edge_length
+            elif self.refState == 'initial':
+                l0 = edge.get_length()
+            else:
+                raise Exception("Unrecognized reference state.")
 
             if edge.type == 0:
                 # AA-bond
                 ks_AA = self.ks_A / 2.0
-                l0 = self.mesh.avg_edge_length
                 hb_AA = espressomd.interactions.HarmonicBond(k=ks_AA, r_0=l0, r_cut=2*l0)
                 self.stretching_interactions.append( (hb_AA, [v1,v2]) )
             elif edge.type == 1:
                 # BB-bond
                 ks_BB = self.ks_B / 2.0
-                l0 = self.mesh.avg_edge_length
                 hb_BB = espressomd.interactions.HarmonicBond(k=ks_BB, r_0=l0, r_cut=2*l0)
                 self.stretching_interactions.append( (hb_BB, [v1,v2]) )
             elif edge.type == 2:
                 # AB-bond
                 ks_AB = self.ks_A*self.ks_B / (self.ks_A + self.ks_B)
-                l0 = self.mesh.avg_edge_length
                 hb_AB = espressomd.interactions.HarmonicBond(k=ks_AB, r_0=l0, r_cut=2*l0)
                 self.stretching_interactions.append( (hb_AB, [v1,v2]) )
             else:
@@ -923,28 +932,27 @@ class ElasticObjectType:
             v3 = dihedral.v3
             v4 = dihedral.v4
 
+            # equilibrium dihedral angle
+            if self.refState == 'flat':
+                phi0 = np.pi
+            elif self.refState == 'initial':
+                phi0 = dihedral.get_dihedral_angle()
+            else:
+                raise Exception("Unrecognized reference state.")
+
             if dihedral.type == 0:
                 # AA-dihedral
                 kb_AA = self.kb_A
-                phi0 = np.pi
-                #phi0 = dihedral.get_dihedral_angle()
-
                 dihedral_AA = espressomd.interactions.Dihedral(bend=kb_AA, mult=1, phase=phi0)
                 self.bending_interactions.append( (dihedral_AA, [v1,v2,v3,v4]) )
             elif dihedral.type == 1:
                 # BB-dihedral
                 kb_BB = self.kb_B
-                phi0 = np.pi
-                #phi0 = dihedral.get_dihedral_angle()
-
                 dihedral_BB = espressomd.interactions.Dihedral(bend=kb_BB, mult=1, phase=phi0)
                 self.bending_interactions.append( (dihedral_BB, [v1,v2,v3,v4]) )
             elif dihedral.type == 2:
                 # AB-dihedral
                 kb_AB = (self.kb_A + self.kb_B) / 2.0
-                phi0 = np.pi
-                #phi0 = dihedral.get_dihedral_angle()
-
                 dihedral_AB = espressomd.interactions.Dihedral(bend=kb_AB, mult=1, phase=phi0)
                 self.bending_interactions.append( (dihedral_AB, [v1,v2,v3,v4]) )
             else:

@@ -40,7 +40,6 @@ public:
   double &phase0() { return m_phase0; }
   int &axis() { return m_axis; }
 
-  double &time() { return m_time; }
   Utils::Vector3d &H() { return m_H; }
 
   void set_types(std::vector<int> const &types) {
@@ -97,7 +96,6 @@ public:
 
       // setup fields
       //printf("current simulation time: %f\n", sim_time);
-      m_time = sim_time;
       set_field_strength(sim_time);
       set_field_direction(sim_time);
 
@@ -135,7 +133,6 @@ private:
   double m_phase0 = 0.0;
   int m_axis = 0;
 
-  double m_time = 0.0;
   // field strength and direction
   Utils::Vector3d m_H;
   Utils::Vector3d m_Hdir;
