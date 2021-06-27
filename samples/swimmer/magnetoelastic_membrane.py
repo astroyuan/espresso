@@ -50,6 +50,7 @@ ncycles = 50
 steps_per_cycle = 1000
 time_step = 0.001
 
+equi_steps = 10000
 total_steps = ncycles*steps_per_cycle
 total_time = time_step*total_steps
 
@@ -77,7 +78,7 @@ type_A = 0
 type_B = 1
 
 # stretching constants
-ks_A = 4000.0
+ks_A = 400.0
 ks_B = 4000.0
 ks_AA = ks_A / 2.0
 ks_BB = ks_B / 2.0
@@ -92,12 +93,18 @@ kb_AB = (kb_A + kb_B) / 2.0
 
 # particle dipole moments
 mu_A = 0.0
-mu_B = 0.0
+mu_B = 1.0
 
 ####################
 # fluid properties #
 ####################
+dx = 1.0 # lattice spacing
+dt = time_step # LB time step
+dens = 1.0 # fluid density
+visc = 1.0 # fluid kinematic viscosity
+ext_force_density = (0.000, 0.0, 0.0)
 kT = 1.0 # temperature
+seed = 42 # random seed
 
 ###################
 # external fields #
@@ -123,10 +130,10 @@ system.time_step = time_step
 system.cell_system.skin = 0.2
 
 # MPI
-print("MPI configuration: " + str(system.cell_system.node_grid))
+print("MPI configuration: ", system.cell_system.node_grid)
 
 # CUDA devices
-#print(system.cuda_init_handle.list_devices())
+print("Available GPU devices: ", system.cuda_init_handle.device_list)
 
 ########################
 # elastic interactions #
@@ -147,26 +154,30 @@ membrane.initialize()
 #########################
 # magnetic interactions #
 #########################
+# dip = (0.0, 0.0, 0.0) leads to undefined quat
 for p in system.part:
     if p.type == type_A:
-        p.dip = (0.0, 0.0, mu_A)
         p.dipm = mu_A
+        p.quat = (1.0, 0.0, 0.0, 0.0)
     if p.type == type_B:
-        p.dip = (0.0, 0.0, mu_B)
         p.dipm = mu_B
+        p.quat = (1.0, 0.0, 0.0, 0.0)
+
 # magnetic dipole-dipole interactions
-dipolar_direct_sum = espressomd.magnetostatics.DipolarDirectSumCpu(prefactor=1)
-system.actors.add(dipolar_direct_sum)
+#dipolar_direct_sum = espressomd.magnetostatics.DipolarDirectSumCpu(prefactor=1)
+#system.actors.add(dipolar_direct_sum)
+
+#dipolar_direct_sum = espressomd.magnetostatics.DipolarDirectSumGpu(prefactor=1)
+#system.actors.add(dipolar_direct_sum)
 
 # dipolar p3m
-#p3m = espressomd.magnetostatics.DipolarP3M(prefactor=1, accuracy=1e-3)
-#system.actors.add(p3m)
+p3m = espressomd.magnetostatics.DipolarP3M(prefactor=1, accuracy=1e-3, mesh=32)
+system.actors.add(p3m)
 
 #######################
 # steric interactions #
 #######################
-# define lj interactions
-wca_epsilon = 0.0
+wca_epsilon = 1.0
 wca_sigma = diameter
 
 system.non_bonded_inter[0, 0].wca.set_params(epsilon=wca_epsilon, sigma=wca_sigma)
@@ -195,10 +206,11 @@ system.dipoleseter.mus = [mu_A, mu_B]
 #############################
 # hydrodynamic interactions #
 #############################
+lbf = espressomd.lb.LBFluidGPU(agrid=dx, dens=dens, visc=visc, tau=dt, kT=kT, seed=seed, ext_force_density=ext_force_density)
+system.actors.add(lbf)
+system.thermostat.set_lb(LB_fluid=lbf, gamma=10.0, seed=123)
 
-
-
-
+#system.thermostat.set_langevin(kT=kT, gamma=10.0, seed=41)
 
 ###########################################################
 # System Configuration Summary
@@ -240,6 +252,8 @@ print('particle radius: {:<8} membrane radius: {:<8}'.format(radius,membrane_rad
 print('vertices number: {:<8} edges number: {:<8} faces number: {:<8}'.format(vertices_num, edges_num, faces_num))
 print('surface nodes density: {:<8}'.format(vertices_num/(4*np.pi*membrane_radius**2)))
 
+print('{:-^50}'.format('Fluid parameters'))
+
 print('{:-^50}'.format('External Field Setup'))
 print('precession angle: {:<8} period: {:<8} freq: {:<8} phi0: {:<8}'.format(precession_angle/np.pi*180, precession_period, precession_freq, precession_phi0))
 
@@ -251,22 +265,24 @@ print('continuum:')
 print('Foppl-von Karman parameter AA: {:.8} BB:{:.8}'.format(para_e_A_c, para_e_B_c))
 print('magnetoelastic parameter AA: {:.8} BB:{:.8}'.format(para_m_A_c, para_m_B_c))
 
-##############
-# Thermostat #
-##############
-#system.thermostat.turn_off()
-system.thermostat.set_langevin(kT=1.0, gamma=10.0, seed=42)
-
-##############
-# Integrator #
-##############
-#system.integrator.set_steepest_descent(f_max=0, gamma=0.1, max_displacement=0.01)
-system.integrator.set_vv()
+###########################################################
+# Equilibration
+###########################################################
+print("Start equilibration")
+#system.timestep = time_step
+#system.integrator.run(equi_steps)
+print("equilibration done.")
 
 ###########################################################
 # RUN
 ###########################################################
+
 output_attributes = ['type', 'mean_curvature', 'gaussian_curvature', 'normal', 'area', 'dipole']
+
+# initial frame
+print('min distance: ', system.analysis.min_dist())
+energy = system.analysis.energy()
+print('time = {} kinetic = {} bonded = {} non_bonded = {} dipolar = {}'.format(system.time, energy['kinetic'], energy['bonded'], energy['non_bonded'], energy['dipolar']))
 membrane.output_vtk_data(output_folder+"swimmer_0.vtk", output_attributes)
 
 ipdb.set_trace()
@@ -275,23 +291,23 @@ i=0
 system.time = 0
 #system.force_cap = 1
 while i < ncycles:
-    print(system.analysis.min_dist())
+    # execute the simulation
+    system.integrator.run(steps_per_cycle)
+    i += 1
+
+    # control external fields
+    #if i % 20 < 10:
+    #    system.dipoleseter.angle = 90/180 * np.pi
+    #else:
+    #    system.dipoleseter.angle = 0.0
+
+    # output
+    print('min distance: ', system.analysis.min_dist())
+
     energy = system.analysis.energy()
     print('time = {} kinetic = {} bonded = {} non_bonded = {} dipolar = {}'.format(system.time, energy['kinetic'], energy['bonded'], energy['non_bonded'], energy['dipolar']))
 
-    # control external fields
-    if i % 20 < 10:
-        system.dipoleseter.angle = 90/180 * np.pi
-    else:
-        system.dipoleseter.angle = 0.0
-
-    # execute the simulation
-    system.integrator.run(steps_per_cycle)
-
-    # output
     membrane.output_vtk_data(output_folder+"swimmer_{}.vtk".format(i), output_attributes)
-
-    i += 1
 
 
 

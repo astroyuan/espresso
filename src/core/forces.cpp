@@ -83,8 +83,6 @@ void init_forces_ghosts(const ParticleRange &particles) {
 void force_calc(CellStructure &cell_structure) {
   ESPRESSO_PROFILER_CXX_MARK_FUNCTION;
 
-  espressoSystemInterface.update();
-
 #ifdef COLLISION_DETECTION
   prepare_local_collision_queue();
 #endif
@@ -97,6 +95,9 @@ void force_calc(CellStructure &cell_structure) {
 
   // set dipole moments before force computation
   dipoleseter.apply(particles);
+
+  // update particle data to gpu
+  espressoSystemInterface.update();
 
   init_forces(particles);
 
