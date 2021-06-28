@@ -1028,6 +1028,9 @@ class ElasticObject:
         self.particle_type_B = particle_type_B
         self.index_offset = self.system.part.highest_particle_id + 1
 
+        self.translate = translate
+        self.rotate = rotate
+
     def initialize(self):
         '''
         initialization
@@ -1037,13 +1040,22 @@ class ElasticObject:
 
         # create bonded interactions
         self.create_bonded_interactions()
+    
+    def translate_and_rotate(self, pos):
+        '''
+        translate and roate particles
+        '''
+        new_pos = pos + self.translate
+
+        return new_pos
 
     def create_particles(self):
         '''
         create espresso particles
         '''
         for vertex in self.mesh.vertices:
-            particle_pos = vertex.r
+            particle_pos = self.translate_and_rotate(vertex.r)
+            # apply translation and rotation
             particle_type = self.particle_type_A if vertex.type == 0 else self.particle_type_B
             particle_id = self.index_offset + vertex.index
             new_particle = self.system.part.add(pos=particle_pos, type=particle_type, id=particle_id, mol_id=self.object_id)

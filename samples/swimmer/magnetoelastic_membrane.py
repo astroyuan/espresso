@@ -22,32 +22,39 @@ import espressomd
 import espressomd.magnetostatics
 
 print(espressomd.features())
-required_features = ["EXTERNAL_FORCES", "DIPOLES", "WCA"]
+required_features = ["EXTERNAL_FORCES", "DIPOLES", "WCA", "LB_BOUNDARIES"]
 espressomd.assert_features(required_features)
 
 import numpy as np
 import os
 import object_in_fluid as oif
+from object_in_fluid.oif_utils import output_vtk_rhomboid
 
 import ipdb
 
 ###########################################################
 # System Parameters
+# Unit system: length - um | time - us | mass - fg
 ###########################################################
+length_unit = 1e-6
+time_unit = 1e-6
+mass_unit = 1e-15
+#kT = 4.11e-6 # temperature
+kT = 0.0
 
 ###########
 # general #
 ###########
-boxX = 100.0
-boxY = 100.0
-boxZ = 100.0
+boxX = 50.0
+boxY = 50.0
+boxZ = 50.0
 
 periodicX = True
 periodicY = True
 periodicZ = True
 
-ncycles = 50
-steps_per_cycle = 1000
+ncycles = 200
+steps_per_cycle = 100
 time_step = 0.001
 
 equi_steps = 10000
@@ -71,6 +78,8 @@ else:
 #######################
 radius          = 0.25         # particle size
 diameter        = 2.0 * radius
+#particle_mass   = 4./3.*np.pi *radius**3 # particle mass
+particle_mass   = 1.0
 membrane_radius = 5.0          # membrane radius
 
 # particle types
@@ -78,22 +87,22 @@ type_A = 0
 type_B = 1
 
 # stretching constants
-ks_A = 400.0
-ks_B = 4000.0
+ks_A = 800.0
+ks_B = 80.0
 ks_AA = ks_A / 2.0
 ks_BB = ks_B / 2.0
 ks_AB = ks_A*ks_B / (ks_A + ks_B)
 
 # bending constants
-kb_A = 50.0
-kb_B = 50.0
+kb_A = 25.0
+kb_B = 25.0
 kb_AA = kb_A
 kb_BB = kb_B
 kb_AB = (kb_A + kb_B) / 2.0
 
 # particle dipole moments
 mu_A = 0.0
-mu_B = 1.0
+mu_B = 0.5
 
 ####################
 # fluid properties #
@@ -102,8 +111,7 @@ dx = 1.0 # lattice spacing
 dt = time_step # LB time step
 dens = 1.0 # fluid density
 visc = 1.0 # fluid kinematic viscosity
-ext_force_density = (0.000, 0.0, 0.0)
-kT = 1.0 # temperature
+ext_force_density = (0.00, 0.0, 0.0)
 seed = 42 # random seed
 
 ###################
@@ -112,7 +120,7 @@ seed = 42 # random seed
 field_on = True
 precession_angle = 90/180 * np.pi
 #precession_angle = np.arccos((1./3.)**(1./2.))
-precession_period = 1000*time_step
+precession_period = 100*time_step
 precession_freq = 1 / precession_period
 precession_phi0 = 0.0
 precession_axis = 0
@@ -146,7 +154,7 @@ elastic_object_type = oif.ElasticObjectType(nodes_file=nodes_file,
 elastic_object_type.initialize()
 
 # create the elastic object
-translate = (0.0, 0.0, 0.0)
+translate = (boxX/2.0, boxY/2.0, boxZ/2.0)
 rotate = (0.0, 0.0, 0.0)
 membrane = oif.ElasticObject(system, elastic_object_type, object_id=0, particle_type_A=type_A, particle_type_B=type_B, translate=translate, rotate=rotate)
 membrane.initialize()
@@ -156,6 +164,7 @@ membrane.initialize()
 #########################
 # dip = (0.0, 0.0, 0.0) leads to undefined quat
 for p in system.part:
+    p.mass = particle_mass
     if p.type == type_A:
         p.dipm = mu_A
         p.quat = (1.0, 0.0, 0.0, 0.0)
@@ -211,6 +220,22 @@ system.actors.add(lbf)
 system.thermostat.set_lb(LB_fluid=lbf, gamma=10.0, seed=123)
 
 #system.thermostat.set_langevin(kT=kT, gamma=10.0, seed=41)
+
+# boundaries
+boundaries = []
+
+# bottom of the channel
+bottom_shape = espressomd.shapes.Rhomboid(corner=[0.0, 0.0, 0.0], a=[boxX, 0.0, 0.0], b=[0.0, boxY, 0.0], c=[0.0, 0.0, 1.0], direction=1)
+boundaries.append(bottom_shape)
+output_vtk_rhomboid(bottom_shape, out_file=output_folder + "bottomwall.vtk")
+
+# top of the channel
+top_shape = espressomd.shapes.Rhomboid(corner=[0.0, 0.0, boxZ - 1], a=[boxX, 0.0, 0.0], b=[0.0, boxY, 0.0], c=[0.0, 0.0, 1.0], direction=1)
+boundaries.append(top_shape)
+output_vtk_rhomboid(top_shape, out_file=output_folder + "topwall.vtk")
+
+for boundary in boundaries:
+    system.lbboundaries.add(espressomd.lbboundaries.LBBoundary(shape=boundary))
 
 ###########################################################
 # System Configuration Summary
@@ -284,6 +309,8 @@ print('min distance: ', system.analysis.min_dist())
 energy = system.analysis.energy()
 print('time = {} kinetic = {} bonded = {} non_bonded = {} dipolar = {}'.format(system.time, energy['kinetic'], energy['bonded'], energy['non_bonded'], energy['dipolar']))
 membrane.output_vtk_data(output_folder+"swimmer_0.vtk", output_attributes)
+lbf.print_vtk_velocity(output_folder+"fluid_0.vtk", [0, boxY/2.0, 0], [boxX, boxY/2.0, boxZ])
+lbf.print_vtk_boundary(output_folder+"boundary_flags.vtk")
 
 ipdb.set_trace()
 
@@ -296,10 +323,12 @@ while i < ncycles:
     i += 1
 
     # control external fields
-    #if i % 20 < 10:
-    #    system.dipoleseter.angle = 90/180 * np.pi
-    #else:
-    #    system.dipoleseter.angle = 0.0
+    if i % 200 < 100:
+        system.dipoleseter.angle = 90/180 * np.pi
+        system.dipoleseter.amp = 1.0
+    else:
+        system.dipoleseter.angle = 0.0
+        system.dipoleseter.amp = 0.0
 
     # output
     print('min distance: ', system.analysis.min_dist())
@@ -308,6 +337,8 @@ while i < ncycles:
     print('time = {} kinetic = {} bonded = {} non_bonded = {} dipolar = {}'.format(system.time, energy['kinetic'], energy['bonded'], energy['non_bonded'], energy['dipolar']))
 
     membrane.output_vtk_data(output_folder+"swimmer_{}.vtk".format(i), output_attributes)
+
+    lbf.print_vtk_velocity(output_folder+"fluid_{}.vtk".format(i), [0, boxY/2.0, 0], [boxX, boxY/2.0, boxZ])
 
 
 
